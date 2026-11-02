@@ -90,6 +90,10 @@ input.big{font-size:20px;font-weight:600;padding:12px}
 .bar{display:grid;grid-template-columns:42% 1fr auto;gap:8px;align-items:center;margin-top:8px;font-size:13px}
 .bar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar i{display:block;height:8px;border-radius:4px;background:var(--ac)}
+.hset{display:grid;grid-template-columns:34px 1fr 1fr 38px;gap:8px;align-items:center;margin-top:8px}
+.hset label{position:relative;margin:0}.hset input{margin:0;padding-right:40px}
+.hset small{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--mu);font-size:12px}
+input[type=date]{color-scheme:dark}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -129,9 +133,9 @@ const U = () => S.unit === 'lb' ? 'lb' : 'kg';
 
 function go(v) { view = v; scrollTo(0, 0); render(); }
 function render() {
-  $('#nav').hidden = view === 'gym' || view === 'edit';
+  $('#nav').hidden = ['gym', 'edit', 'history', 'hedit'].includes(view);
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.go === view));
-  $('#app').innerHTML = ({home: Home, routines: Routines, edit: Editor, gym: Gym, settings: Settings})[view]();
+  $('#app').innerHTML = ({home: Home, routines: Routines, edit: Editor, gym: Gym, settings: Settings, history: History, hedit: HEdit})[view]();
   if (A) A.keepScreenOn(view === 'gym');
   renderRest();
   prCheck();
@@ -290,16 +294,21 @@ function Gym() {
 }
 /* ---------- Set input + PRs ---------- */
 const wStep = () => S.wstep || (U() === 'lb' ? 5 : 2.5);
-function bestSet(name) { // all-time best set for this exercise (history + this workout)
-  const k = name.trim().toLowerCase(); let b = null;
+/* All-time best set for this exercise (history + this workout). With nothing logged yet,
+   the routine's weight is the mark to beat (base: true -> compare weight only). */
+function bestSet(item) {
+  const k = item.name.trim().toLowerCase(); let b = null;
   const chk = s => { if (!b || e1(s) > e1(b)) b = s; };
   S.history.forEach(h => h.ex.forEach(e => { if (e.n.trim().toLowerCase() === k) e.sets.forEach(chk); }));
   if (S.active) S.active.items.forEach(it => { if (it.name.trim().toLowerCase() === k) it.done.forEach(chk); });
+  if (!b && num(item.weight) > 0) b = {w: num(item.weight), r: 0, base: true};
   return b;
 }
+const beats = (s, b) => !!b && (b.base ? s.w > b.w : e1(s) > e1(b));
 function actPanel(it, fin, n) {
-  const b = bestSet(it.name), st = wStep();
-  return `<div class="act"><div class="row small"><span class="muted">${fin ? 'Extra set' : `Set ${it.done.length + 1} of ${n}`}</span>${b ? `<span class="muted" style="text-align:right">PR ${fmt(b.w)} ${U()} × ${b.r}</span>` : ''}</div>
+  const b = bestSet(it), st = wStep();
+  const lbl = b ? (b.base ? `Current ${fmt(b.w)} ${U()}` : `PR ${fmt(b.w)} ${U()} × ${b.r}`) : '';
+  return `<div class="act"><div class="row small"><span class="muted">${fin ? 'Extra set' : `Set ${it.done.length + 1} of ${n}`}</span>${b ? `<span class="muted" style="text-align:right">${lbl}</span>` : ''}</div>
     <div class="step"><button data-act="st" data-f="w" data-d="-1">−</button><label><input id="w" inputmode="decimal" value="${fmt(lastVal(it, 'w'))}"><small>${U()}</small></label><button data-act="st" data-f="w" data-d="1">+</button></div>
     <div class="days steps">${[0.5, 1, 1.25, 2.5, 5].map(v => `<button class="chip mini ${v === st ? 'on' : ''}" data-act="wstep" data-v="${v}">±${v}</button>`).join('')}</div>
     <div class="step"><button data-act="st" data-f="r" data-d="-1">−</button><label><input id="r" inputmode="numeric" value="${lastVal(it, 'r')}"><small>reps</small></label><button data-act="st" data-f="r" data-d="1">+</button></div>
@@ -310,8 +319,7 @@ function curSet() { return {w: num($('#w').value), r: parseInt($('#r').value) ||
 function prCheck() {
   const h = $('#prHint'), W = S.active;
   if (!h || !W || W.cur == null) return;
-  const b = bestSet(W.items[W.cur].name);
-  h.hidden = !(b && e1(curSet()) > e1(b));
+  h.hidden = !beats(curSet(), bestSet(W.items[W.cur]));
 }
 function celebrate(name, s) {
   const el = $('#pr');
@@ -324,8 +332,8 @@ function celebrate(name, s) {
 function doneSet() {
   const W = S.active, it = W.items[W.cur];
   try { ac = ac || new AudioContext(); ac.resume(); } catch (e) {}
-  const s = curSet(), best = bestSet(it.name);
-  if (best && e1(s) > e1(best)) { s.pr = true; celebrate(it.name, s); }
+  const s = curSet();
+  if (beats(s, bestSet(it))) { s.pr = true; celebrate(it.name, s); }
   it.done.push(s);
   const [a, b] = group(W.items, W.cur);
   for (let j = W.cur + 1; j <= b; j++) if (need(W.items[j])) { W.cur = j; save(); if (A) A.vibrate(50); return render(); }
@@ -400,6 +408,7 @@ function Settings() {
   return `<header><h1>Settings</h1></header>
   <h2>Backup</h2><p class="muted small">Your data lives only on this phone. Export a backup file to keep it safe or move it to a new phone.</p>
   <div class="grid2"><button class="btn" data-act="export">Export backup</button><button class="btn ghost" data-act="import">Import backup</button></div>
+  <h2>History</h2><button class="btn ghost" data-act="hist">Workout history (${S.history.length})</button>
   <h2>Daily checks</h2>${S.checks.map(c => `<div class="card row"><span>${esc(c.name)}</span><button class="icon" data-act="delCheck" data-id="${c.id}">✕</button></div>`).join('') || '<p class="muted small">No checks</p>'}
   <div class="row"><input id="newCheck" placeholder="e.g. Drank 3L of water?"><button class="btn sm" data-act="addCheck">Add</button></div>
   <h2>Home charts</h2>${S.charts.map((c, i) => `<div class="card row"><span class="small">${chartTitle(c)}</span><button class="icon" data-act="delChart" data-i="${i}">✕</button></div>`).join('') || '<p class="muted small">No charts</p>'}
@@ -411,6 +420,52 @@ function Settings() {
   <h2>Data</h2><button class="btn ghost danger" data-act="reset">Delete all data</button>
   <p class="muted small center">Tally 1.0 · free &amp; open source<br>No accounts. No tracking. No internet.<br>github.com/gemedos/Tally</p>`;
 }
+/* ---------- History ---------- */
+let hed = null; // {i, w}: index in S.history + editable copy
+const longDate = d => new Date(d + 'T12:00').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'});
+function History() {
+  const rows = S.history.map((h, i) => [h, i]).reverse().map(([h, i]) => {
+    const sets = h.ex.reduce((a, e) => a + e.sets.length, 0), prs = h.ex.reduce((a, e) => a + e.sets.filter(s => s.pr).length, 0);
+    const vol = Math.round(h.ex.reduce((a, e) => a + e.sets.reduce((b, s) => b + s.w * s.r, 0), 0));
+    return `<button class="card item" data-act="hopen" data-i="${i}"><div class="row"><b>${esc(h.name || 'Workout')}</b><small class="muted">${longDate(h.d)}</small></div>
+      <small class="muted">${h.ex.length} exercises · ${sets} sets · ${vol} ${U()}${h.dur ? ` · ${h.dur} min` : ''}${prs ? ` · 🏆 ${prs}` : ''}</small></button>`;
+  }).join('');
+  return `<header><button class="icon" data-act="settings">←</button><h1>History</h1><span class="muted small">${S.history.length} workouts</span></header>${rows || '<p class="muted">No workouts yet. Finish one in gym mode and it shows up here.</p>'}`;
+}
+function HEdit() {
+  const w = hed.w;
+  return `<header><button class="icon" data-act="hsave">←</button><h1>Edit workout</h1></header>
+  <input class="big" value="${esc(w.name)}" data-hf="name" placeholder="Workout name">
+  <div class="grid2"><label>Date<input type="date" value="${esc(w.d)}" data-hf="d"></label><label>Duration (min)<input inputmode="numeric" value="${esc(w.dur || '')}" data-hf="dur"></label></div>
+  ${w.ex.map((e, ei) => `<div class="card"><div class="row"><input value="${esc(e.n)}" data-e="${ei}" data-k="n" style="font-weight:600"><button class="icon" data-act="hexdel" data-e="${ei}">✕</button></div>
+    ${e.sets.map((s, si) => `<div class="hset"><span class="muted small">${si + 1}${s.pr ? ' 🏆' : ''}</span><label><input inputmode="decimal" value="${esc(s.w)}" data-e="${ei}" data-s="${si}" data-k="w"><small>${U()}</small></label><label><input inputmode="numeric" value="${esc(s.r)}" data-e="${ei}" data-s="${si}" data-k="r"><small>reps</small></label><button class="icon" data-act="hsetdel" data-e="${ei}" data-s="${si}">✕</button></div>`).join('')}
+    <button class="btn ghost" data-act="hsetadd" data-e="${ei}" style="padding:8px">+ Add set</button></div>`).join('')}
+  <button class="btn" data-act="hsave">Save</button><button class="btn ghost danger" data-act="hdel">Delete workout</button>`;
+}
+/* Re-flag PR sets after history changes: a set is a PR when it beats every earlier set of that exercise */
+function recomputePR() {
+  const best = {};
+  S.history.forEach(h => h.ex.forEach(e => {
+    const k = e.n.trim().toLowerCase();
+    e.sets.forEach(s => {
+      const v = e1(s);
+      if (!(k in best)) { best[k] = v; return; } // first ever set keeps its flag (it was judged against the routine)
+      if (v > best[k]) { s.pr = true; best[k] = v; } else delete s.pr;
+    });
+  }));
+}
+function saveHistory() {
+  const w = hed.w;
+  w.name = String(w.name).trim() || 'Workout';
+  w.dur = parseInt(w.dur) || 0;
+  if (!/^\d{4}-\d\d-\d\d$/.test(w.d)) w.d = S.history[hed.i].d;
+  w.ex = w.ex.map(e => ({n: String(e.n).trim(), sets: e.sets.map(s => Object.assign(s, {w: num(s.w), r: parseInt(s.r) || 0}))}))
+    .filter(e => e.n && e.sets.length);
+  if (w.ex.length) S.history[hed.i] = w; else S.history.splice(hed.i, 1);
+  S.history.sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : 0);
+  recomputePR(); save(); hed = null; go('history');
+}
+
 window.onImported = text => {
   let d;
   try { d = JSON.parse(text); } catch (e) { return alert('That file is not a valid Tally backup.'); }
@@ -463,6 +518,14 @@ const H = {
     document.querySelectorAll('[data-act="wstep"]').forEach(b => b.classList.toggle('on', +b.dataset.v === S.wstep));
   },
   prClose() { $('#pr').hidden = true; },
+  settings() { go('settings'); },
+  hist() { go('history'); },
+  hopen(d) { hed = {i: +d.i, w: JSON.parse(JSON.stringify(S.history[+d.i]))}; go('hedit'); },
+  hsave: saveHistory,
+  hdel() { if (!confirm('Delete this workout from your history?')) return; S.history.splice(hed.i, 1); recomputePR(); save(); hed = null; go('history'); },
+  hexdel(d) { hed.w.ex.splice(+d.e, 1); render(); },
+  hsetdel(d) { hed.w.ex[+d.e].sets.splice(+d.s, 1); render(); },
+  hsetadd(d) { const s = hed.w.ex[+d.e].sets, l = s[s.length - 1]; s.push({w: l ? l.w : 0, r: l ? l.r : 0}); render(); },
   period(d) { S.charts[+d.i].p = +d.p; save(); render(); },
   unit(d) {
     if (d.u === U()) return;
@@ -483,6 +546,11 @@ document.addEventListener('click', e => {
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'w' || t.id === 'r') prCheck();
+  if (view === 'hedit' && hed) {
+    if (t.dataset.hf) hed.w[t.dataset.hf] = t.value;
+    else if (t.dataset.s != null) hed.w.ex[+t.dataset.e].sets[+t.dataset.s][t.dataset.k] = t.value;
+    else if (t.dataset.e != null) hed.w.ex[+t.dataset.e].n = t.value;
+  }
   if (view === 'edit' && edit) {
     if (t.dataset.f === 'name') edit.name = t.value;
     else if (t.dataset.k) edit.items[+t.dataset.i][t.dataset.k] = t.value;
@@ -495,6 +563,8 @@ document.addEventListener('change', e => {
 });
 window.onBack = () => {
   if (view === 'edit') { commitEdit(); return true; }
+  if (view === 'hedit') { saveHistory(); return true; }
+  if (view === 'history') { go('settings'); return true; }
   if (view !== 'home') { go('home'); return true; }
   return false;
 };
