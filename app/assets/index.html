@@ -33,8 +33,19 @@ label{font-size:12px;color:var(--mu);display:block}label input{margin-top:3px}
 .box{width:26px;height:26px;border-radius:8px;border:2px solid var(--mu);display:grid;place-items:center;font-weight:900;color:var(--acfg)}
 .check.on .box{background:var(--ac);border-color:var(--ac)}.check.on{border-color:var(--ac)}
 .streak{font-size:13px;color:var(--mu)}
-.train{display:block;width:100%;background:var(--ac);color:var(--acfg);border-radius:18px;padding:22px 16px;margin:14px 0 6px;text-align:left}
-.train b{display:block;font-size:26px}.train small{opacity:.75}
+.train{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;min-height:240px;background:var(--ac);color:var(--acfg);border-radius:24px;padding:24px 16px;margin:14px 0 6px;text-align:center;transition:transform .15s}
+.train:active{transform:scale(.98)}
+.train b{display:block;font-size:30px;font-weight:900;letter-spacing:-.01em}.train small{opacity:.7;font-size:14px;margin-top:2px}
+.playbig{width:104px;height:104px;border-radius:50%;background:#111;display:grid;place-items:center;margin-bottom:16px;animation:breathe 2.4s infinite}
+.playbig svg{width:46px;height:46px;fill:var(--ac);margin-left:6px}
+@keyframes breathe{0%{box-shadow:0 0 0 0 #1117}70%{box-shadow:0 0 0 22px #1110}100%{box-shadow:0 0 0 0 #1110}}
+.train.pressed .playbig{animation:popb .35s cubic-bezier(.2,1.6,.4,1) forwards}
+@keyframes popb{35%{transform:scale(.82)}100%{transform:scale(1.35)}}
+#burst{position:fixed;inset:0;z-index:20;pointer-events:none;background:#111;clip-path:circle(0 at var(--x) var(--y));transition:clip-path .45s cubic-bezier(.7,0,.3,1),opacity .3s ease-out}
+#burst.go{clip-path:circle(150vmax at var(--x) var(--y))}
+#burst.out{opacity:0}
+#app.enter{animation:enter .4s cubic-bezier(.2,.8,.3,1)}
+@keyframes enter{from{opacity:0;transform:translateY(28px) scale(.97)}}
 .chart svg{width:100%;height:auto;margin-top:6px;overflow:visible}
 .chart polyline{fill:none;stroke:var(--ac);stroke-width:2;stroke-linejoin:round}
 .chart circle{fill:var(--ac)}
@@ -106,6 +117,7 @@ input[type=date]{color-scheme:dark}
 </nav>
 <div id="rest" hidden></div>
 <div id="pr" data-act="prClose" hidden></div>
+<div id="burst" hidden></div>
 <input type="file" id="file" accept=".json,application/json" hidden>
 <script>
 'use strict';
@@ -159,7 +171,7 @@ function Home() {
   }).join('');
   const names = [r, ...m].filter(Boolean).map(x => esc(x.name)).join(' + ');
   const sub = S.active ? 'Workout in progress' : names || (S.routines.length ? 'Nothing scheduled today · pick one' : 'Create your first routine');
-  h += `<button class="train" data-act="train"><b>${S.active ? 'Resume workout' : "Let's train"} →</b><small>${sub}</small></button>`;
+  h += `<button class="train" data-act="train"><span class="playbig"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span><b>${S.active ? 'Resume workout' : "Let's train"}</b><small>${sub}</small></button>`;
   return h + S.charts.map((c, i) => c.type === 'progress' ? progressCard(c, i) : chartCard(c)).join('');
 }
 /* Estimated 1-rep max (Epley); bodyweight sets (0 weight) are scored by reps */
@@ -478,7 +490,23 @@ $('#file').addEventListener('change', e => { const f = e.target.files[0]; if (f)
 /* ---------- Events ---------- */
 const H = {
   check(d) { const t = dkey(); S.log[t] = S.log[t] || {}; S.log[t][d.id] = !S.log[t][d.id]; if (A && S.log[t][d.id]) A.vibrate(30); save(); render(); },
-  train: startTrain,
+  train(_, el) { // pop the play icon, flood the screen from it, then slide the workout in
+    const b = $('#burst');
+    if (!window.matchMedia || matchMedia('(prefers-reduced-motion: reduce)').matches) return startTrain();
+    if (!b.hidden) return;
+    const r = el.querySelector('.playbig').getBoundingClientRect();
+    b.style.setProperty('--x', r.left + r.width / 2 + 'px');
+    b.style.setProperty('--y', r.top + r.height / 2 + 'px');
+    el.classList.add('pressed');
+    if (A) A.vibrate(25);
+    setTimeout(() => { b.hidden = false; void b.offsetWidth; b.classList.add('go'); }, 170);
+    setTimeout(() => {
+      startTrain();
+      const app = $('#app'); app.classList.remove('enter'); void app.offsetWidth; app.classList.add('enter');
+      b.classList.add('out');
+      setTimeout(() => { b.hidden = true; b.classList.remove('go', 'out'); }, 320);
+    }, 170 + 450);
+  },
   home() { go('home'); },
   newR(d) { edit = {id: uid(), kind: d.kind, name: '', days: [], items: []}; H.addEx(); go('edit'); },
   editR(d) { edit = JSON.parse(JSON.stringify(S.routines.find(r => r.id === d.id))); go('edit'); },
@@ -541,7 +569,7 @@ document.addEventListener('click', e => {
   const t = e.target.closest('[data-act],[data-go]');
   if (!t) return;
   if (t.dataset.go) return go(t.dataset.go);
-  const f = H[t.dataset.act]; if (f) f(t.dataset);
+  const f = H[t.dataset.act]; if (f) f(t.dataset, t);
 });
 document.addEventListener('input', e => {
   const t = e.target;
