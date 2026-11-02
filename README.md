@@ -1,2 +1,32 @@
 # Tally
 A open source local app for gym tracking, no third parties, no accounts, no bs.
+
+- **~28 KB APK**, Android 7.0+ (API 24)
+- No account, no internet permission, no tracking — all data stays on your phone
+- Export / import a backup file to move to a new phone
+
+## Features
+- **Home** — daily checks (default: "Took creatine today?", with streak), a big *Let's train* button, and small progress charts (volume, top weight or total reps per exercise)
+- **Routines** — training days with any name, exercises with sets / reps / weight / rest, assigned to weekdays. **Supersets** by linking exercises. **Mini routines** (e.g. Abs) assigned to several days, added on top of that day's workout
+- **Gym mode** — opens today's routine (switchable), ▶ an exercise, log each set, rest timer starts automatically with an alarm (works with the screen off). Superset rounds skip rest between exercises. Weights you lift become the routine's new weights
+- **Settings** — export/import backup, add/remove daily checks, add/remove home charts, default rest time
+
+## Build
+No Gradle, just the Android SDK tools. Needs JDK 17+ and an Android SDK with
+`platforms;android-34` and `build-tools;35.0.0`:
+
+```sh
+ANDROID_HOME=/path/to/android-sdk ./build.sh     # -> out/tally.apk
+```
+
+Without `KEYSTORE` set, it signs with a generated `debug.keystore`. For releases:
+`KEYSTORE=release.jks KS_PASS=... KS_ALIAS=... ./build.sh`
+
+## Layout
+```
+app/AndroidManifest.xml
+app/assets/index.html        # the whole UI + logic (HTML/CSS/JS, data in localStorage)
+app/src/com/tally/app/       # MainActivity (WebView + file/alarm bridge), RestAlarm
+app/res/drawable/            # icon
+build.sh
+```
