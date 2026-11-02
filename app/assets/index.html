@@ -66,6 +66,30 @@ input.big{font-size:20px;font-weight:600;padding:12px}
 #rest{position:fixed;left:0;right:0;bottom:0;background:#15171C;border-top:2px solid var(--ac);border-radius:20px 20px 0 0;padding:18px 16px 22px;text-align:center;box-shadow:0 -10px 40px #000a}
 #rest>*{max-width:528px;margin-left:auto;margin-right:auto}
 #clock{font-size:64px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;color:var(--ac)}
+.chip.mini{padding:4px 10px;font-size:12px}
+.step{display:grid;grid-template-columns:64px 1fr 64px;gap:8px;align-items:center;margin:10px 0}
+.step>button{height:64px;border-radius:16px;background:var(--line);font-size:30px;font-weight:700}
+.step>button:active{background:var(--ac);color:var(--acfg)}
+.step label{position:relative;margin:0}
+.step input{margin:0;height:64px;font-size:30px;font-weight:800;text-align:center;padding:0 34px 0 8px}
+.step small{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--mu);font-size:13px}
+.steps{justify-content:center;margin:-2px 0 4px}
+.prhint{text-align:center;color:#FFC93C;font-weight:700;font-size:14px;margin:4px 0;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.45}}
+.dot.pr{border-color:#FFC93C;color:#FFC93C;background:#33290f}
+#pr{position:fixed;inset:0;background:#000000f0;display:grid;place-items:center;z-index:10}
+.prbox{text-align:center;animation:pop .45s cubic-bezier(.2,1.6,.4,1)}
+.trophy{font-size:96px;line-height:1;animation:spin 1s ease-out}
+.prt{font-size:40px;font-weight:900;letter-spacing:.06em;color:#FFC93C;margin:8px 0 4px}
+.prv{font-size:30px;font-weight:800;color:var(--ac);margin:6px 0 18px}
+@keyframes pop{from{transform:scale(.3);opacity:0}}
+@keyframes spin{from{transform:rotate(-200deg) scale(.2)}}
+.champ{display:flex;align-items:center;gap:12px;background:#1f2614;border:1px solid #3a4a1a;border-radius:12px;padding:10px 12px;margin:4px 0 6px}
+.champ>span{font-size:28px}.champ>div{flex:1;min-width:0}.champ small{display:block}
+.champ b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.champ>b{font-size:20px}
+.bar{display:grid;grid-template-columns:42% 1fr auto;gap:8px;align-items:center;margin-top:8px;font-size:13px}
+.bar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar i{display:block;height:8px;border-radius:4px;background:var(--ac)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -77,6 +101,7 @@ input.big{font-size:20px;font-weight:600;padding:12px}
   <button data-go="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>Settings</button>
 </nav>
 <div id="rest" hidden></div>
+<div id="pr" data-act="prClose" hidden></div>
 <input type="file" id="file" accept=".json,application/json" hidden>
 <script>
 'use strict';
@@ -94,6 +119,10 @@ const defaults = () => ({v: 1, checks: [{id: 'creatine', name: 'Took creatine to
 let S;
 try { S = Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { S = defaults(); }
 const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+function migrate() { // v2: add the "Biggest gains" chart once
+  if ((S.v || 1) < 2) { if (!S.charts.some(c => c.type === 'progress')) S.charts.unshift({type: 'progress', p: 91}); S.v = 2; save(); }
+}
+migrate();
 
 let view = 'home', edit = null;
 const U = () => S.unit === 'lb' ? 'lb' : 'kg';
@@ -105,6 +134,7 @@ function render() {
   $('#app').innerHTML = ({home: Home, routines: Routines, edit: Editor, gym: Gym, settings: Settings})[view]();
   if (A) A.keepScreenOn(view === 'gym');
   renderRest();
+  prCheck();
 }
 
 /* ---------- Home ---------- */
@@ -126,7 +156,31 @@ function Home() {
   const names = [r, ...m].filter(Boolean).map(x => esc(x.name)).join(' + ');
   const sub = S.active ? 'Workout in progress' : names || (S.routines.length ? 'Nothing scheduled today · pick one' : 'Create your first routine');
   h += `<button class="train" data-act="train"><b>${S.active ? 'Resume workout' : "Let's train"} →</b><small>${sub}</small></button>`;
-  return h + S.charts.map(chartCard).join('');
+  return h + S.charts.map((c, i) => c.type === 'progress' ? progressCard(c, i) : chartCard(c)).join('');
+}
+/* Estimated 1-rep max (Epley); bodyweight sets (0 weight) are scored by reps */
+const e1 = s => s.w > 0 ? s.w * (1 + s.r / 30) : s.r;
+const PERIODS = [[28, '4W'], [91, '3M'], [182, '6M'], [365, '1Y'], [0, 'All']];
+function gains(days) {
+  const from = days ? dkey(new Date(Date.now() - days * 864e5)) : '', by = {};
+  S.history.filter(h => h.d >= from).forEach(h => h.ex.forEach(e => {
+    if (!e.sets.length) return;
+    const k = e.n.trim().toLowerCase();
+    (by[k] = by[k] || {n: e.n, v: []}).v.push(Math.max(...e.sets.map(e1)));
+  }));
+  return Object.values(by).filter(x => x.v.length > 1 && x.v[0] > 0).map(x => {
+    const best = Math.max(...x.v.slice(1));
+    return {n: x.n, g: (best - x.v[0]) / x.v[0] * 100};
+  }).filter(x => x.g > 0).sort((p, q) => q.g - p.g).slice(0, 5);
+}
+function progressCard(c, i) {
+  const p = c.p == null ? 91 : c.p, g = gains(p), top = g[0];
+  let h = `<div class="card chart"><div class="row"><span class="small muted">Biggest gains</span></div>
+  <div class="days">${PERIODS.map(([d, l]) => `<button class="chip mini ${d === p ? 'on' : ''}" data-act="period" data-i="${i}" data-p="${d}">${l}</button>`).join('')}</div>`;
+  if (!top) return h + '<div class="muted small">Not enough data yet. Log the same exercise in at least two workouts in this period.</div></div>';
+  h += `<div class="champ"><span>🏆</span><div><small class="muted">Most progress</small><b>${esc(top.n)}</b></div><b class="up">+${Math.round(top.g)}%</b></div>`;
+  h += g.slice(1).map(x => `<div class="bar"><span>${esc(x.n)}</span><i style="width:${Math.max(4, x.g / top.g * 100)}%"></i><b class="up">+${Math.round(x.g)}%</b></div>`).join('');
+  return h + '<div class="muted small" style="margin-top:8px">Estimated 1-rep max: first vs best workout in the period</div></div>';
 }
 function series(c) {
   const hs = S.history.slice(-30);
@@ -138,7 +192,7 @@ function series(c) {
   });
   return out;
 }
-const chartTitle = c => c.type === 'volume' ? `Total volume per workout (${U()})` : esc(c.ex) + ' · ' + (c.m === 'reps' ? 'total reps' : `top weight (${U()})`);
+const chartTitle = c => c.type === 'progress' ? 'Biggest gains' : c.type === 'volume' ? `Total volume per workout (${U()})` : esc(c.ex) + ' · ' + (c.m === 'reps' ? 'total reps' : `top weight (${U()})`);
 function chartCard(c) {
   const v = series(c);
   let body = '<div class="muted small">No data yet — finish a workout</div>';
@@ -226,20 +280,53 @@ function Gym() {
     h += `<div class="card gx ${cur ? 'cur' : ''} ${fin ? 'fin' : ''} ${inSS ? 'ss' : ''} ${i === a ? 'ssTop' : ''} ${i === b ? 'ssBot' : ''}">
       <div class="row"><span><b>${esc(it.name)}</b>${inSS && i === a ? ' <span class="tag">SUPERSET</span>' : ''}<br><span class="small muted">${n} × ${esc(it.reps)} · ${fmt(num(it.weight))} ${U()}</span></span>
       ${cur ? '' : `<button class="play" data-act="play" data-i="${i}">${fin ? '✓' : '▶'}</button>`}</div>
-      <div class="sets">${Array.from({length: Math.max(n, it.done.length)}, (_, k) => { const d = it.done[k]; return `<span class="dot ${d ? 'on' : ''}">${d ? fmt(d.w) + '×' + d.r : k + 1}</span>`; }).join('')}</div>
-      ${cur ? `<div class="act"><div class="small muted">${fin ? 'Extra set' : `Set ${it.done.length + 1} of ${n}`}</div>
-        <div class="grid2"><label>${U()}<input id="w" inputmode="decimal" value="${fmt(lastVal(it, 'w'))}"></label><label>Reps<input id="r" inputmode="numeric" value="${lastVal(it, 'r')}"></label></div>
-        <button class="btn" data-act="doneSet">Set done ✓</button>${it.done.length ? `<button class="btn ghost" data-act="undo">Undo last set</button>` : ''}</div>` : ''}
+      <div class="sets">${Array.from({length: Math.max(n, it.done.length)}, (_, k) => { const d = it.done[k]; return `<span class="dot ${d ? 'on' : ''} ${d && d.pr ? 'pr' : ''}">${d ? fmt(d.w) + '×' + d.r + (d.pr ? ' 🏆' : '') : k + 1}</span>`; }).join('')}</div>
+      ${cur ? actPanel(it, fin, n) : ''}
     </div>`;
   });
   const all = W.items.length && !W.items.some(need);
   h += `<button class="btn ${all ? '' : 'ghost'}" data-act="finish" style="margin-top:20px">${all ? '🎉 ' : ''}Finish workout</button><button class="btn ghost danger" data-act="discard">Discard workout</button>`;
   return h;
 }
+/* ---------- Set input + PRs ---------- */
+const wStep = () => S.wstep || (U() === 'lb' ? 5 : 2.5);
+function bestSet(name) { // all-time best set for this exercise (history + this workout)
+  const k = name.trim().toLowerCase(); let b = null;
+  const chk = s => { if (!b || e1(s) > e1(b)) b = s; };
+  S.history.forEach(h => h.ex.forEach(e => { if (e.n.trim().toLowerCase() === k) e.sets.forEach(chk); }));
+  if (S.active) S.active.items.forEach(it => { if (it.name.trim().toLowerCase() === k) it.done.forEach(chk); });
+  return b;
+}
+function actPanel(it, fin, n) {
+  const b = bestSet(it.name), st = wStep();
+  return `<div class="act"><div class="row small"><span class="muted">${fin ? 'Extra set' : `Set ${it.done.length + 1} of ${n}`}</span>${b ? `<span class="muted" style="text-align:right">PR ${fmt(b.w)} ${U()} × ${b.r}</span>` : ''}</div>
+    <div class="step"><button data-act="st" data-f="w" data-d="-1">−</button><label><input id="w" inputmode="decimal" value="${fmt(lastVal(it, 'w'))}"><small>${U()}</small></label><button data-act="st" data-f="w" data-d="1">+</button></div>
+    <div class="days steps">${[0.5, 1, 1.25, 2.5, 5].map(v => `<button class="chip mini ${v === st ? 'on' : ''}" data-act="wstep" data-v="${v}">±${v}</button>`).join('')}</div>
+    <div class="step"><button data-act="st" data-f="r" data-d="-1">−</button><label><input id="r" inputmode="numeric" value="${lastVal(it, 'r')}"><small>reps</small></label><button data-act="st" data-f="r" data-d="1">+</button></div>
+    <div id="prHint" class="prhint" hidden>🏆 New PR if you log this</div>
+    <button class="btn" data-act="doneSet">Set done ✓</button>${it.done.length ? `<button class="btn ghost" data-act="undo">Undo last set</button>` : ''}</div>`;
+}
+function curSet() { return {w: num($('#w').value), r: parseInt($('#r').value) || 0}; }
+function prCheck() {
+  const h = $('#prHint'), W = S.active;
+  if (!h || !W || W.cur == null) return;
+  const b = bestSet(W.items[W.cur].name);
+  h.hidden = !(b && e1(curSet()) > e1(b));
+}
+function celebrate(name, s) {
+  const el = $('#pr');
+  el.innerHTML = `<div class="prbox"><div class="trophy">🏆</div><div class="prt">NEW PR</div><div>${esc(name)}</div><div class="prv">${fmt(s.w)} ${U()} × ${s.r}</div><small class="muted">tap to continue</small></div>`;
+  el.hidden = false;
+  if (A) A.vibrate(450);
+  tones([523, 659, 784, 1047], .12);
+  clearTimeout(celebrate.t); celebrate.t = setTimeout(() => { el.hidden = true; }, 3000);
+}
 function doneSet() {
   const W = S.active, it = W.items[W.cur];
   try { ac = ac || new AudioContext(); ac.resume(); } catch (e) {}
-  it.done.push({w: num($('#w').value), r: parseInt($('#r').value) || 0});
+  const s = curSet(), best = bestSet(it.name);
+  if (best && e1(s) > e1(best)) { s.pr = true; celebrate(it.name, s); }
+  it.done.push(s);
   const [a, b] = group(W.items, W.cur);
   for (let j = W.cur + 1; j <= b; j++) if (need(W.items[j])) { W.cur = j; save(); if (A) A.vibrate(50); return render(); }
   let nx = null;
@@ -267,16 +354,17 @@ function finish() {
 
 /* ---------- Rest timer ---------- */
 let ac;
-function beep() {
+function tones(freqs, gap) {
   try {
     ac = ac || new AudioContext();
-    [0, .35, .7].forEach(t => {
-      const o = ac.createOscillator(), g = ac.createGain(), s = ac.currentTime + t;
-      o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+    freqs.forEach((f, i) => {
+      const o = ac.createOscillator(), g = ac.createGain(), s = ac.currentTime + i * gap;
+      o.frequency.value = f; o.connect(g); g.connect(ac.destination);
       g.gain.setValueAtTime(.5, s); g.gain.exponentialRampToValueAtTime(.001, s + .3); o.start(s); o.stop(s + .3);
     });
   } catch (e) {}
 }
+const beep = () => tones([880, 880, 880], .35);
 function renderRest() {
   const el = $('#rest'), W = S.active, on = !!(W && W.restEnd) && view === 'gym';
   el.hidden = !on;
@@ -315,7 +403,7 @@ function Settings() {
   <h2>Daily checks</h2>${S.checks.map(c => `<div class="card row"><span>${esc(c.name)}</span><button class="icon" data-act="delCheck" data-id="${c.id}">✕</button></div>`).join('') || '<p class="muted small">No checks</p>'}
   <div class="row"><input id="newCheck" placeholder="e.g. Drank 3L of water?"><button class="btn sm" data-act="addCheck">Add</button></div>
   <h2>Home charts</h2>${S.charts.map((c, i) => `<div class="card row"><span class="small">${chartTitle(c)}</span><button class="icon" data-act="delChart" data-i="${i}">✕</button></div>`).join('') || '<p class="muted small">No charts</p>'}
-  <div class="row"><select id="chEx"><option value="">Total volume</option>${exNames().map(n => `<option>${esc(n)}</option>`).join('')}</select>
+  <div class="row"><select id="chEx"><option value="">Total volume</option><option value="__gains">Biggest gains</option>${exNames().map(n => `<option>${esc(n)}</option>`).join('')}</select>
   <select id="chM" style="width:110px"><option value="weight">Weight</option><option value="reps">Reps</option></select><button class="btn sm" data-act="addChart">Add</button></div>
   <h2>Units</h2><div class="days">${['kg', 'lb'].map(u => `<button class="chip ${U() === u ? 'on' : ''}" data-act="unit" data-u="${u}">${u}</button>`).join('')}</div>
   <p class="muted small">Switching converts all your saved weights.</p>
@@ -328,7 +416,7 @@ window.onImported = text => {
   try { d = JSON.parse(text); } catch (e) { return alert('That file is not a valid Tally backup.'); }
   if (!d || !Array.isArray(d.routines)) return alert('That file is not a valid Tally backup.');
   if (!confirm('Replace ALL current data with this backup?')) return;
-  S = Object.assign(defaults(), d); save(); go('home'); alert('Backup imported ✓');
+  S = Object.assign(defaults(), d); migrate(); save(); go('home'); alert('Backup imported ✓');
 };
 $('#file').addEventListener('change', e => { const f = e.target.files[0]; if (f) f.text().then(onImported); e.target.value = ''; });
 
@@ -363,7 +451,19 @@ const H = {
   delCheck(d) { S.checks = S.checks.filter(c => c.id !== d.id); save(); render(); },
   addCheck() { const v = $('#newCheck').value.trim(); if (!v) return; S.checks.push({id: uid(), name: v}); save(); render(); },
   delChart(d) { S.charts.splice(+d.i, 1); save(); render(); },
-  addChart() { const ex = $('#chEx').value; S.charts.push(ex ? {type: 'ex', ex, m: $('#chM').value} : {type: 'volume'}); save(); render(); },
+  addChart() { const ex = $('#chEx').value; S.charts.push(ex === '__gains' ? {type: 'progress', p: 91} : ex ? {type: 'ex', ex, m: $('#chM').value} : {type: 'volume'}); save(); render(); },
+  st(d) {
+    const el = $('#' + d.f), step = d.f === 'w' ? wStep() : 1;
+    el.value = fmt(Math.max(0, num(el.value) + +d.d * step));
+    if (A) A.vibrate(15);
+    prCheck();
+  },
+  wstep(d) {
+    S.wstep = +d.v; save();
+    document.querySelectorAll('[data-act="wstep"]').forEach(b => b.classList.toggle('on', +b.dataset.v === S.wstep));
+  },
+  prClose() { $('#pr').hidden = true; },
+  period(d) { S.charts[+d.i].p = +d.p; save(); render(); },
   unit(d) {
     if (d.u === U()) return;
     const f = d.u === 'lb' ? 2.20462 : 1 / 2.20462, cv = v => Math.round(num(v) * f * 10) / 10;
@@ -382,6 +482,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'w' || t.id === 'r') prCheck();
   if (view === 'edit' && edit) {
     if (t.dataset.f === 'name') edit.name = t.value;
     else if (t.dataset.k) edit.items[+t.dataset.i][t.dataset.k] = t.value;
