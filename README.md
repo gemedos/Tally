@@ -5,6 +5,9 @@ A open source local app for gym tracking, no third parties, no accounts, no bs.
 - No account, no internet permission, no tracking — all data stays on your phone
 - Export / import a backup file to move to a new phone
 
+## Download
+Get the latest APK from **[Releases](https://github.com/gemedos/Tally/releases/latest)**. Open it on your phone, allow installing from unknown sources when Android asks, and tap Install. Updates install over the old version and keep your data.
+
 ## Features
 - **Home** — daily checks (default: "Took creatine today?", with streak), a big *Let's train* button, and small progress charts (volume, top weight or total reps per exercise)
 - **Routines** — training days with any name, exercises with sets / reps / weight / rest, assigned to weekdays. **Supersets** by linking exercises. **Mini routines** (e.g. Abs) assigned to several days, added on top of that day's workout
