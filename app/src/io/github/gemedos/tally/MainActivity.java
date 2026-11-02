@@ -1,12 +1,19 @@
 package io.github.gemedos.tally;
 
 import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentUris;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.WindowManager;
@@ -20,6 +27,8 @@ import android.widget.Toast;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 
@@ -88,7 +97,53 @@ public class MainActivity extends Activity {
         }
     }
 
+    static final String AUTO_NAME = "tally-autobackup.json", AUTO_DIR = "Tally";
+
+    /** Writes the backup to Download/Tally/, which survives uninstalling the app. */
+    boolean writeAutoBackup(String json) throws Exception {
+        byte[] data = json.getBytes("UTF-8");
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentResolver cr = getContentResolver();
+            Uri col = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+            String rel = Environment.DIRECTORY_DOWNLOADS + "/" + AUTO_DIR + "/";
+            Uri uri = null;
+            // only finds the file if this install created it; after a reinstall a new one is made
+            Cursor c = cr.query(col, new String[]{MediaStore.MediaColumns._ID},
+                    MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.RELATIVE_PATH + "=?",
+                    new String[]{AUTO_NAME, rel}, null);
+            if (c != null) {
+                if (c.moveToFirst()) uri = ContentUris.withAppendedId(col, c.getLong(0));
+                c.close();
+            }
+            if (uri == null) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, AUTO_NAME);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, "application/json");
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, rel);
+                uri = cr.insert(col, v);
+                if (uri == null) return false;
+            }
+            OutputStream os = cr.openOutputStream(uri, "wt");
+            try { os.write(data); } finally { os.close(); }
+            return true;
+        }
+        if (checkSelfPermission("android.permission.WRITE_EXTERNAL_STORAGE") != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 2);
+            return false;
+        }
+        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), AUTO_DIR);
+        if (!dir.exists() && !dir.mkdirs()) return false;
+        FileOutputStream os = new FileOutputStream(new File(dir, AUTO_NAME));
+        try { os.write(data); } finally { os.close(); }
+        return true;
+    }
+
     class Bridge {
+        @JavascriptInterface
+        public boolean autoBackup(String json) {
+            try { return writeAutoBackup(json); } catch (Exception e) { return false; }
+        }
+
         @JavascriptInterface
         public void save(String name, String text) {
             pendingSave = text;

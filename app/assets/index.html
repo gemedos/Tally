@@ -133,8 +133,18 @@ const fmt = n => Math.round(n * 100) / 100;
 
 const defaults = () => ({v: 1, checks: [{id: 'creatine', name: 'Took creatine today?'}], log: {}, charts: [{type: 'volume'}], routines: [], history: [], rest: 90, unit: 'kg', active: null});
 let S;
-try { S = Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { S = defaults(); }
+try { S = Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); }
+catch (e) { // never overwrite data we failed to read: park it under another key first
+  try { localStorage.setItem(KEY + '-unreadable-' + Date.now(), localStorage.getItem(KEY)); } catch (_) {}
+  S = defaults();
+}
 const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+/* Copy of all data in Download/Tally/ (outside the app, so it survives an uninstall) */
+function autoBackup() {
+  if (!A || !A.autoBackup || (!S.routines.length && !S.history.length)) return;
+  const at = Date.now();
+  if (A.autoBackup(JSON.stringify(Object.assign({}, S, {savedAt: at})))) { S.lastAuto = at; save(); }
+}
 function migrate() { // v2: add the "Biggest gains" chart once
   if ((S.v || 1) < 2) { if (!S.charts.some(c => c.type === 'progress')) S.charts.unshift({type: 'progress', p: 91}); S.v = 2; save(); }
 }
@@ -171,6 +181,9 @@ function Home() {
   }).join('');
   const names = [r, ...m].filter(Boolean).map(x => esc(x.name)).join(' + ');
   const sub = S.active ? 'Workout in progress' : names || (S.routines.length ? 'Nothing scheduled today · pick one' : 'Create your first routine');
+  if (!S.routines.length && !S.history.length) h += `<div class="card"><b>New phone or reinstalled?</b>
+    <p class="muted small" style="margin:4px 0 0">Tally keeps an automatic backup in <b>Download/Tally</b>. Restore it, or create your first routine.</p>
+    <button class="btn" data-act="import">Restore a backup</button></div>`;
   h += `<button class="train" data-act="train"><span class="playbig"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span><b>${S.active ? 'Resume workout' : "Let's train"}</b><small>${sub}</small></button>`;
   return h + S.charts.map((c, i) => c.type === 'progress' ? progressCard(c, i) : chartCard(c)).join('');
 }
@@ -254,7 +267,7 @@ function commitEdit() {
   if (r.items.length) r.items[r.items.length - 1].ss = false;
   const i = S.routines.findIndex(x => x.id === r.id);
   if (i >= 0) S.routines[i] = r; else S.routines.push(r);
-  save(); edit = null; go('routines');
+  save(); autoBackup(); edit = null; go('routines');
 }
 
 /* ---------- Gym mode ---------- */
@@ -369,7 +382,7 @@ function finish() {
     });
   }
   if (A) A.cancelAlarm();
-  S.active = null; save(); go('home');
+  S.active = null; save(); autoBackup(); go('home');
 }
 
 /* ---------- Rest timer ---------- */
@@ -419,6 +432,7 @@ function exNames() {
 function Settings() {
   return `<header><h1>Settings</h1></header>
   <h2>Backup</h2><p class="muted small">Your data lives only on this phone. Export a backup file to keep it safe or move it to a new phone.</p>
+  ${A ? `<p class="muted small">Automatic backup to <b>Download/Tally</b> after every workout or change: ${S.lastAuto ? 'last saved ' + new Date(S.lastAuto).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : 'not saved yet'}.</p>` : ''}
   <div class="grid2"><button class="btn" data-act="export">Export backup</button><button class="btn ghost" data-act="import">Import backup</button></div>
   <h2>History</h2><button class="btn ghost" data-act="hist">Workout history (${S.history.length})</button>
   <h2>Daily checks</h2>${S.checks.map(c => `<div class="card row"><span>${esc(c.name)}</span><button class="icon" data-act="delCheck" data-id="${c.id}">✕</button></div>`).join('') || '<p class="muted small">No checks</p>'}
@@ -475,7 +489,7 @@ function saveHistory() {
     .filter(e => e.n && e.sets.length);
   if (w.ex.length) S.history[hed.i] = w; else S.history.splice(hed.i, 1);
   S.history.sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : 0);
-  recomputePR(); save(); hed = null; go('history');
+  recomputePR(); save(); autoBackup(); hed = null; go('history');
 }
 
 window.onImported = text => {
@@ -483,7 +497,7 @@ window.onImported = text => {
   try { d = JSON.parse(text); } catch (e) { return alert('That file is not a valid Tally backup.'); }
   if (!d || !Array.isArray(d.routines)) return alert('That file is not a valid Tally backup.');
   if (!confirm('Replace ALL current data with this backup?')) return;
-  S = Object.assign(defaults(), d); migrate(); save(); go('home'); alert('Backup imported ✓');
+  S = Object.assign(defaults(), d); migrate(); save(); autoBackup(); go('home'); alert('Backup imported ✓');
 };
 $('#file').addEventListener('change', e => { const f = e.target.files[0]; if (f) f.text().then(onImported); e.target.value = ''; });
 
@@ -516,7 +530,7 @@ const H = {
   del(d) { edit.items.splice(+d.i, 1); render(); },
   ss(d) { const it = edit.items[+d.i]; it.ss = !it.ss; render(); },
   addEx() { edit.items.push({id: uid(), name: '', sets: 3, reps: '10', weight: 0, rest: S.rest, ss: false}); if (view === 'edit') render(); },
-  delR() { if (!confirm('Delete "' + edit.name + '"?')) return; S.routines = S.routines.filter(r => r.id !== edit.id); save(); edit = null; go('routines'); },
+  delR() { if (!confirm('Delete "' + edit.name + '"?')) return; S.routines = S.routines.filter(r => r.id !== edit.id); save(); autoBackup(); edit = null; go('routines'); },
   play(d) { S.active.cur = +d.i; save(); render(); },
   doneSet,
   undo() { const W = S.active; W.items[W.cur].done.pop(); W.restEnd = null; if (A) A.cancelAlarm(); save(); render(); },
@@ -550,7 +564,7 @@ const H = {
   hist() { go('history'); },
   hopen(d) { hed = {i: +d.i, w: JSON.parse(JSON.stringify(S.history[+d.i]))}; go('hedit'); },
   hsave: saveHistory,
-  hdel() { if (!confirm('Delete this workout from your history?')) return; S.history.splice(hed.i, 1); recomputePR(); save(); hed = null; go('history'); },
+  hdel() { if (!confirm('Delete this workout from your history?')) return; S.history.splice(hed.i, 1); recomputePR(); save(); autoBackup(); hed = null; go('history'); },
   hexdel(d) { hed.w.ex.splice(+d.e, 1); render(); },
   hsetdel(d) { hed.w.ex[+d.e].sets.splice(+d.s, 1); render(); },
   hsetadd(d) { const s = hed.w.ex[+d.e].sets, l = s[s.length - 1]; s.push({w: l ? l.w : 0, r: l ? l.r : 0}); render(); },
@@ -597,6 +611,7 @@ window.onBack = () => {
   return false;
 };
 window.onResume = () => { if (view === 'home') render(); else tick(); };
+if (!S.lastAuto || dkey(new Date(S.lastAuto)) !== dkey()) autoBackup(); // at least once a day
 render();
 </script>
 </body>
