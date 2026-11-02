@@ -1,4 +1,4 @@
-package com.tally.app;
+package io.github.gemedos.tally;
 
 import android.app.Activity;
 import android.content.Context;

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds Tally without Gradle, using only the Android SDK tools.
 # Needs: JDK 17+, Android SDK with "platforms;android-34" and "build-tools;35.0.0".
-# Usage: ANDROID_HOME=/path/to/sdk ./build.sh        -> out/tally.apk
-# Release signing: KEYSTORE=my.jks KS_PASS=... KS_ALIAS=... ./build.sh
+# Usage: ANDROID_HOME=/path/to/sdk bash build.sh        -> out/tally.apk
+# Release signing: KEYSTORE=my.jks KS_PASS=... KS_ALIAS=... bash build.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 

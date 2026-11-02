@@ -1,4 +1,4 @@
-package com.tally.app;
+package io.github.gemedos.tally;
 
 import android.app.AlarmManager;
 import android.app.Notification;
