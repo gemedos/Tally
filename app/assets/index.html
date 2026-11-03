@@ -101,6 +101,20 @@ input.big{font-size:20px;font-weight:600;padding:12px}
 .bar{display:grid;grid-template-columns:42% 1fr auto;gap:8px;align-items:center;margin-top:8px;font-size:13px}
 .bar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar i{display:block;height:8px;border-radius:4px;background:var(--ac)}
+#wheel{position:relative;height:calc(100vh - 170px);min-height:380px;perspective:1100px;touch-action:none;overflow:hidden;user-select:none;-webkit-user-select:none;
+  -webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent);mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent)}
+.fc{position:absolute;left:4px;right:4px;top:50%;height:160px;margin-top:-80px;display:flex;flex-direction:column;justify-content:space-between;text-align:left;
+  padding:16px 18px;border-radius:24px;background:var(--card);border:1px solid var(--line);backface-visibility:hidden;-webkit-backface-visibility:hidden;will-change:transform}
+.fc.on{background:var(--ac);color:var(--acfg);border-color:var(--ac);box-shadow:0 12px 40px #c6f43226}
+.fc-tag{font-size:11px;font-weight:800;letter-spacing:.1em;opacity:.75}
+.fc-x{font-size:12px;opacity:.7;text-align:right;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-name{font-size:28px;font-weight:900;letter-spacing:-.01em;line-height:1.1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fc-meta{display:flex;gap:16px;font-size:13px}.fc-meta strong{font-size:20px;font-weight:800;margin-right:2px}
+.fc-est{font-size:12px;opacity:.65}
+.fc.go{animation:fcgo .2s ease-out forwards}
+@keyframes fcgo{to{transform:scale(1.07)}}
+#app.sl{animation:slin .28s cubic-bezier(.2,.8,.3,1)}#app.sr{animation:srin .28s cubic-bezier(.2,.8,.3,1)}
+@keyframes slin{from{opacity:0;transform:translateX(48px)}}@keyframes srin{from{opacity:0;transform:translateX(-48px)}}
 .hset{display:grid;grid-template-columns:34px 1fr 1fr 38px;gap:8px;align-items:center;margin-top:8px}
 .hset label{position:relative;margin:0}.hset input{margin:0;padding-right:40px}
 .hset small{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--mu);font-size:12px}
@@ -155,9 +169,10 @@ const U = () => S.unit === 'lb' ? 'lb' : 'kg';
 
 function go(v) { view = v; scrollTo(0, 0); render(); }
 function render() {
-  $('#nav').hidden = ['gym', 'edit', 'history', 'hedit'].includes(view);
+  $('#nav').hidden = ['gym', 'edit', 'history', 'hedit', 'pick'].includes(view);
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.go === view));
-  $('#app').innerHTML = ({home: Home, routines: Routines, edit: Editor, gym: Gym, settings: Settings, history: History, hedit: HEdit})[view]();
+  $('#app').innerHTML = ({home: Home, routines: Routines, edit: Editor, gym: Gym, settings: Settings, history: History, hedit: HEdit, pick: Pick})[view]();
+  if (view === 'pick') initWheel();
   if (A) A.keepScreenOn(view === 'gym');
   renderRest();
   prCheck();
@@ -284,15 +299,83 @@ function buildWorkout(rid, minis, old) {
   return items;
 }
 function startTrain() {
-  if (!S.active) {
-    let r = todayRoutine(); const m = todayMinis().map(x => x.id);
-    if (!r && !m.length) r = S.routines.find(x => x.kind === 'day');
-    if (!r && !m.length) return go('routines');
-    const rid = r ? r.id : null;
-    S.active = {rid, minis: m, items: buildWorkout(rid, m), start: Date.now(), cur: null, restEnd: null};
-    save();
-  }
-  go('gym');
+  if (S.active) return go('gym');
+  if (!S.routines.length) return go('routines');
+  go('pick');
+}
+/* A day routine also gets today's mini routines; a mini routine card starts on its own */
+function startRoutine(r) {
+  const rid = r.kind === 'day' ? r.id : null, m = r.kind === 'day' ? todayMinis().map(x => x.id) : [r.id];
+  S.active = {rid, minis: m, items: buildWorkout(rid, m), start: Date.now(), cur: null, restEnd: null};
+  save(); go('gym');
+  const app = $('#app'); app.classList.remove('enter'); void app.offsetWidth; app.classList.add('enter');
+}
+
+/* ---------- Workout picker: flashcards on a 3D wheel ---------- */
+const WSTEP = 150, WRAD = 280; // card spacing for dragging (px), wheel radius (px)
+let wpos = 0, wdrag = null, wlast = 0, wquiet = 0;
+const pickList = () => [...S.routines.filter(r => r.kind === 'day'), ...S.routines.filter(r => r.kind === 'mini')];
+const routineSets = r => r.items.reduce((a, i) => a + (+i.sets || 1), 0);
+function estimateMin(r) { // ~45 s per set + rest, no rest when going straight to the next superset exercise
+  let s = 0;
+  r.items.forEach(it => { const n = +it.sets || 1; s += n * 45 + (it.ss ? 0 : n * (+it.rest || 0)); });
+  return Math.max(5, Math.round(s / 60 / 5) * 5);
+}
+function workoutTime(r) { // average of previous workouts of this routine, else the estimate
+  const d = S.history.filter(h => h.dur > 0 && (h.rid ? h.rid === r.id : (h.name || '').split(' + ')[0] === r.name)).map(h => h.dur);
+  return d.length ? {m: Math.round(d.reduce((a, b) => a + b, 0) / d.length), n: d.length} : {m: estimateMin(r), n: 0};
+}
+function Pick() {
+  const list = pickList(), t = todayRoutine(), tm = todayMinis(), isToday = r => r === t || (!t && tm.includes(r));
+  wpos = Math.max(0, list.findIndex(isToday));
+  const extra = tm.length ? `+ ${tm.map(m => esc(m.name)).join(', ')}` : '';
+  return `<header><button class="icon" data-act="home">←</button><h1>Choose workout</h1></header>
+  <div id="wheel">${list.map((r, i) => {
+    const tt = workoutTime(r), days = ORDER.filter(d => r.days.includes(d)).map(d => DAYS[d]).join(' · ') || 'No day';
+    return `<button class="fc" data-act="pick" data-i="${i}">
+      <div class="row"><span class="fc-tag">${isToday(r) ? '● TODAY' : r.kind === 'mini' ? 'MINI · ' + days : days}</span>${r.kind === 'day' && extra ? `<small class="fc-x">${extra}</small>` : ''}</div>
+      <b class="fc-name">${esc(r.name)}</b>
+      <div class="fc-meta"><span><strong>${r.items.length}</strong> exercises</span><span><strong>${routineSets(r)}</strong> sets</span><span><strong>~${tt.m}</strong> min</span></div>
+      <small class="fc-est">${tt.n ? `⏱ average of your ${tt.n} workout${tt.n > 1 ? 's' : ''}` : '⏱ estimated time'}</small></button>`;
+  }).join('')}</div>
+  <p class="muted small center" style="margin-top:10px">Swipe up or down · tap to start</p>`;
+}
+function wheelLayout(anim) {
+  document.querySelectorAll('#wheel .fc').forEach((c, i) => {
+    const o = i - wpos, a = Math.abs(o);
+    c.style.transition = anim ? 'transform .5s cubic-bezier(.2,.9,.25,1.12), opacity .4s' : 'none';
+    c.style.transform = `translateZ(-${WRAD}px) rotateX(${-o * 32}deg) translateZ(${WRAD}px)`;
+    c.style.opacity = a > 2.4 ? 0 : 1 - a * 0.36;
+    c.style.zIndex = 100 - Math.round(a * 10);
+    c.style.pointerEvents = a > 2.4 ? 'none' : '';
+    c.classList.toggle('on', Math.round(wpos) === i);
+  });
+}
+function wheelTo(i) { wpos = Math.max(0, Math.min(pickList().length - 1, i)); wheelLayout(true); }
+function initWheel() {
+  const w = $('#wheel'); if (!w) return;
+  wheelLayout(false);
+  w.onpointerdown = e => { wdrag = {id: e.pointerId, y: e.clientY, p: wpos, moved: 0, ly: e.clientY, lt: Date.now(), v: 0}; };
+  w.onpointermove = e => {
+    if (!wdrag) return;
+    const dy = e.clientY - wdrag.y, now = Date.now();
+    wdrag.moved = Math.max(wdrag.moved, Math.abs(dy));
+    if (wdrag.moved < 8) return; // still a tap: no capture, so the card gets the click
+    if (!wdrag.cap) { try { w.setPointerCapture(wdrag.id); } catch (_) {} wdrag.cap = 1; }
+    wdrag.v = (e.clientY - wdrag.ly) / Math.max(1, now - wdrag.lt); wdrag.ly = e.clientY; wdrag.lt = now;
+    const n = pickList().length, before = Math.round(wpos);
+    let p = wdrag.p - dy / WSTEP;
+    if (p < 0) p *= 0.35; else if (p > n - 1) p = n - 1 + (p - n + 1) * 0.35; // rubber band at the ends
+    wpos = p; wheelLayout(false);
+    if (Math.round(wpos) !== before && A) A.vibrate(8);
+  };
+  w.onpointerup = w.onpointercancel = () => {
+    const d = wdrag; wdrag = null;
+    if (!d || d.moved < 8) return;
+    wquiet = Date.now();
+    wheelTo(Math.round(wpos - d.v * 220 / WSTEP)); // flick carries on a bit
+  };
+  w.onwheel = e => { e.preventDefault(); if (Date.now() - wlast < 200) return; wlast = Date.now(); wheelTo(Math.round(wpos) + (e.deltaY > 0 ? 1 : -1)); };
 }
 function lastVal(it, k) { const d = it.done[it.done.length - 1]; return d ? d[k] : k === 'w' ? num(it.weight) : parseInt(it.reps) || 0; }
 function Gym() {
@@ -375,7 +458,7 @@ function startRest(sec) { S.active.restEnd = Date.now() + sec * 1000; if (A) A.a
 function finish() {
   const W = S.active, done = W.items.filter(it => it.done.length);
   if (done.length) {
-    S.history.push({d: dkey(), dur: Math.round((Date.now() - W.start) / 60000), name: [...new Set(done.map(i => i.rn))].join(' + '), ex: done.map(it => ({n: it.name, sets: it.done}))});
+    S.history.push({d: dkey(), dur: Math.round((Date.now() - W.start) / 60000), rid: W.rid || (W.minis.length === 1 ? W.minis[0] : null), name: [...new Set(done.map(i => i.rn))].join(' + '), ex: done.map(it => ({n: it.name, sets: it.done}))});
     done.forEach(it => { // progression: remember the heaviest weight you used
       const r = S.routines.find(x => x.id === it.rid), o = r && r.items.find(x => x.id === it.id);
       if (o) o.weight = Math.max(...it.done.map(d => d.w));
@@ -560,6 +643,15 @@ const H = {
     document.querySelectorAll('[data-act="wstep"]').forEach(b => b.classList.toggle('on', +b.dataset.v === S.wstep));
   },
   prClose() { $('#pr').hidden = true; },
+  pick(d, el) {
+    if (Date.now() - wquiet < 350) return; // this "click" was the end of a drag
+    const i = +d.i;
+    if (i !== Math.round(wpos)) return wheelTo(i); // tapped a card behind: bring it to the front
+    const r = pickList()[i];
+    if (!window.matchMedia) return startRoutine(r);
+    el.classList.add('go'); if (A) A.vibrate(25);
+    setTimeout(() => startRoutine(r), 200);
+  },
   settings() { go('settings'); },
   hist() { go('history'); },
   hopen(d) { hed = {i: +d.i, w: JSON.parse(JSON.stringify(S.history[+d.i]))}; go('hedit'); },
@@ -582,9 +674,32 @@ const H = {
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-act],[data-go]');
   if (!t) return;
-  if (t.dataset.go) return go(t.dataset.go);
+  if (t.dataset.go) return goTab(t.dataset.go);
   const f = H[t.dataset.act]; if (f) f(t.dataset, t);
 });
+/* Swipe left/right between Home, Routines and Settings */
+const TABS = ['home', 'routines', 'settings'];
+function goTab(v) {
+  const from = TABS.indexOf(view), to = TABS.indexOf(v);
+  go(v);
+  if (from < 0 || to < 0 || from === to) return;
+  const a = $('#app'); a.classList.remove('sl', 'sr'); void a.offsetWidth; a.classList.add(to > from ? 'sl' : 'sr');
+}
+let sw = null;
+document.addEventListener('touchstart', e => {
+  sw = null;
+  if (!TABS.includes(view) || e.touches.length > 1 || e.target.closest('input,select,textarea,#wheel')) return;
+  sw = {x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now()};
+}, {passive: true});
+document.addEventListener('touchend', e => {
+  if (!sw) return;
+  const p = e.changedTouches[0], dx = p.clientX - sw.x, dy = p.clientY - sw.y, quick = Date.now() - sw.t < 700;
+  sw = null;
+  if (!quick || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.8) return; // mostly-horizontal swipes only
+  const j = TABS.indexOf(view) + (dx < 0 ? 1 : -1);
+  if (j >= 0 && j < TABS.length) goTab(TABS[j]);
+}, {passive: true});
+
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id === 'w' || t.id === 'r') prCheck();
